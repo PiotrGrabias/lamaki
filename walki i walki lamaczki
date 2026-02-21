@@ -1,0 +1,103 @@
+drop table lamaczki_pairs;
+drop table walki_lamaczki;
+
+CREATE TABLE lamaczki_pairs AS
+SELECT *
+FROM (
+    SELECT
+        la1.team_a AS common_team,
+        CASE
+            WHEN la2.team_a != la1.team_a AND la2.team_a != la1.team_b THEN la2.team_a
+            ELSE la2.team_b
+        END AS team_x,
+        CASE
+            WHEN la1.team_a != la2.team_a AND la1.team_a != la2.team_b THEN la1.team_a
+            ELSE la1.team_b
+        END AS team_y
+    FROM lamaczki_2025 la1
+    JOIN lamaczki_2025 la2
+        ON (la1.team_a = la2.team_a OR la1.team_a = la2.team_b
+            OR la1.team_b = la2.team_a OR la1.team_b = la2.team_b)
+       AND NOT (la1.team_a = la2.team_a AND la1.team_b = la2.team_b)
+) sub
+WHERE team_x <> team_y
+  AND NOT EXISTS (
+        SELECT 1
+        FROM lamaczki_2025 la3
+        WHERE (la3.team_a = sub.team_x AND la3.team_b = sub.team_y)
+           OR (la3.team_a = sub.team_y AND la3.team_b = sub.team_x)
+    );
+
+-- Step 2: Match these new pairs with matches_future and show the common team
+CREATE TABLE walki_lamaczki AS
+SELECT DISTINCT
+    fm.match_date,
+    fm.home_team,
+    fm.away_team,
+    lp.common_team  -- the "bridge" team
+FROM matches_future fm
+JOIN lamaczki_pairs lp
+    ON (
+        (lp.team_x LIKE CONCAT('%', fm.home_team, '%') AND lp.team_y LIKE CONCAT('%', fm.away_team, '%'))
+        OR (lp.team_x LIKE CONCAT('%', fm.away_team, '%') AND lp.team_y LIKE CONCAT('%', fm.home_team, '%'))
+    )
+-- Ensure they don't already exist in lamaczki_2025
+WHERE NOT EXISTS (
+        SELECT 1
+        FROM lamaczki_2025 la2
+        WHERE (fm.home_team = la2.team_a AND fm.away_team = la2.team_b)
+           OR (fm.home_team = la2.team_b AND fm.away_team = la2.team_a)
+    );
+drop table walki;
+drop table combined_matches;
+
+create table combined_matches as
+    SELECT nc.team_a AS nc_druzyna1, nc.team_b AS nc_druzyna2,
+    la.team_a AS la_druzyna1, la.team_b AS la_druzyna2
+    FROM na_calego_2025 nc
+    JOIN lamaczki_2025 la
+    ON (nc.team_a = la.team_a OR nc.team_a = la.team_b OR nc.team_b = la.team_a OR nc.team_b = la.team_b);
+
+INSERT INTO sus_pairs (nc_druzyna2, druzyna)
+SELECT
+    nc_druzyna2,
+    CASE
+        WHEN la_druzyna1 != nc_druzyna1 THEN la_druzyna1
+        WHEN la_druzyna2 != nc_druzyna1 THEN la_druzyna2
+    END AS druzyna
+FROM combined_matches
+WHERE la_druzyna1 = nc_druzyna1 OR la_druzyna2 = nc_druzyna1;
+
+INSERT INTO sus_pairs (nc_druzyna2, druzyna)
+SELECT
+    nc_druzyna1 AS nc_druzyna2,
+    CASE
+        WHEN la_druzyna1 != nc_druzyna2 THEN la_druzyna1
+        WHEN la_druzyna2 != nc_druzyna2 THEN la_druzyna2
+    END AS druzyna
+FROM combined_matches
+WHERE la_druzyna1 = nc_druzyna2 OR la_druzyna2 = nc_druzyna2;
+
+CREATE TABLE walki as
+SELECT DISTINCT fm.match_date, fm.home_team, fm.away_team
+FROM matches_future fm
+ JOIN sus_pairs sp
+ON (
+    (sp.nc_druzyna2 LIKE CONCAT('%', fm.home_team, '%') AND sp.druzyna LIKE CONCAT('%', away_team, '%'))
+    OR (sp.nc_druzyna2 LIKE CONCAT('%', fm.away_team, '%') AND sp.druzyna LIKE CONCAT('%', fm.home_team, '%'))
+)
+WHERE NOT EXISTS (
+        SELECT 1
+        FROM na_calego_2025 nc2
+        WHERE (fm.home_team = nc2.team_a AND fm.away_team = nc2.team_b)
+        OR (fm.home_team = nc2.team_b AND fm.away_team = nc2.team_a)
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM lamaczki_2025 la2
+        WHERE (fm.home_team = la2.team_a AND fm.away_team = la2.team_b)
+        OR (fm.home_team = la2.team_b AND fm.away_team = la2.team_a)
+    );
+
+
+
